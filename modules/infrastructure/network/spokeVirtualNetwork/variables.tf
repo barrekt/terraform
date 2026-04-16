@@ -2,6 +2,8 @@
 # Required
 # -------------------------------------------------------
 
+# Adding a comment to trigger pipeline
+
 variable "application_purpose" {
   description = "The purpose or workload name for this deployment, used as part of the resource naming convention (e.g. \"payments\", \"api\", \"frontend\")."
   type        = string
