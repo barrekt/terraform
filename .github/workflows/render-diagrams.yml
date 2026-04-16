@@ -12,6 +12,9 @@ permissions:
 jobs:
   render:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -32,27 +35,39 @@ jobs:
       - name: Detect changed excalidraw files
         id: changed
         run: |
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'diagrams/*.excalidraw' | tr '\n' ' ')
-          echo "files=${FILES}" >> $GITHUB_OUTPUT
+          $files = (git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- 'diagrams/*.excalidraw') -join ' '
+          "files=$files" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Render and copy diagrams
         if: steps.changed.outputs.files != ''
         run: |
-          for file in ${{ steps.changed.outputs.files }}; do
-            base=$(basename "$file" .excalidraw)
-            uv run --project scripts python scripts/render_excalidraw.py \
-              "$file" --output "diagrams/${base}.png"
-            target=$(jq -r --arg excalidraw "diagrams/${base}.excalidraw" 'to_entries[] | select(.value.excalidraw == $excalidraw) | .value.png' diagrams/manifest.json)
-            if [ -n "$target" ]; then
-              cp "diagrams/${base}.png" "$target"
-              echo "Copied diagrams/${base}.png → $target"
-            fi
-          done
+          $manifest = Get-Content diagrams/manifest.json | ConvertFrom-Json -AsHashtable
+          $files = "${{ steps.changed.outputs.files }}" -split '\s+' | Where-Object { $_ }
+
+          foreach ($file in $files) {
+            $base = [System.IO.Path]::GetFileNameWithoutExtension($file)
+
+            uv run --project scripts python scripts/render_excalidraw.py `
+              $file --output "diagrams/$base.png"
+
+            $excalidrawKey = "diagrams/$base.excalidraw"
+            $target = $manifest.Values |
+              Where-Object { $_.excalidraw -eq $excalidrawKey } |
+              Select-Object -ExpandProperty png
+
+            if ($target) {
+              Copy-Item "diagrams/$base.png" $target
+              Write-Host "Copied diagrams/$base.png -> $target"
+            }
+          }
 
       - name: Commit updated PNGs
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add diagrams/*.png modules/
-          git diff --staged --quiet || git commit -m "chore: auto-render updated excalidraw diagrams [skip ci]"
-          git push
+          git diff --staged --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: auto-render updated excalidraw diagrams [skip ci]"
+            git push
+          }
