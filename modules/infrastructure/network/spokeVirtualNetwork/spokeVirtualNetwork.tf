@@ -20,18 +20,18 @@ module "virtual_network" {
 # Network Security Groups
 # -------------------------------------------------------
 
-# module "network_security_groups" {
-#   source   = "../../../resource/network/networkSecurityGroup"
-#   for_each = var.network_security_groups
+module "network_security_groups" {
+  source   = "../../../resource/network/networkSecurityGroup"
+  for_each = var.network_security_groups
 
-#   application_purpose = "${var.application_purpose}-${each.key}"
-#   environment         = var.environment
-#   region              = var.region
-#   resource_group_name = var.resource_group_name
-#   location            = var.location
-#   security_rules      = each.value.security_rules
-#   tags                = var.tags
-# }
+  application_purpose = "${var.application_purpose}-${each.key}"
+  environment         = var.environment
+  region              = var.region
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  security_rules      = each.value.security_rules
+  tags                = var.tags
+}
 
 # -------------------------------------------------------
 # Route Tables
