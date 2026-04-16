@@ -1,0 +1,58 @@
+name: Render Excalidraw Diagrams
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'diagrams/*.excalidraw'
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --project scripts
+
+      - name: Install Playwright browsers
+        run: uv run --project scripts playwright install chromium --with-deps
+
+      - name: Detect changed excalidraw files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'diagrams/*.excalidraw' | tr '\n' ' ')
+          echo "files=${FILES}" >> $GITHUB_OUTPUT
+
+      - name: Render and copy diagrams
+        if: steps.changed.outputs.files != ''
+        run: |
+          for file in ${{ steps.changed.outputs.files }}; do
+            base=$(basename "$file" .excalidraw)
+            uv run --project scripts python scripts/render_excalidraw.py \
+              "$file" --output "diagrams/${base}.png"
+            target=$(jq -r --arg key "${base}.excalidraw" '.[$key] // empty' diagrams/manifest.json)
+            if [ -n "$target" ]; then
+              cp "diagrams/${base}.png" "$target"
+              echo "Copied diagrams/${base}.png → $target"
+            fi
+          done
+
+      - name: Commit updated PNGs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add diagrams/*.png modules/
+          git diff --staged --quiet || git commit -m "chore: auto-render updated excalidraw diagrams [skip ci]"
+          git push
