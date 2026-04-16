@@ -1,3 +1,6 @@
 {
-  "spoke-virtual-network.excalidraw": "modules/infrastructure/network/spokeVirtualNetwork/spoke-virtual-network.png"
+  "modules/infrastructure/network/spokeVirtualNetwork": {
+    "excalidraw": "diagrams/spoke-virtual-network.excalidraw",
+    "png": "modules/infrastructure/network/spokeVirtualNetwork/spoke-virtual-network.png"
+  }
 }

@@ -1,0 +1,121 @@
+name: Update Module Diagrams
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/**/*.tf'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect changed modules with diagrams
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'modules/**/*.tf')
+          MODULES=""
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            dir=$(dirname "$file")
+            while [ "$dir" != "." ] && [ "$dir" != "" ]; do
+              if jq -e --arg d "$dir" '.[$d]' diagrams/manifest.json > /dev/null 2>&1; then
+                MODULES="$MODULES $dir"
+                break
+              fi
+              dir=$(dirname "$dir")
+            done
+          done <<< "$CHANGED"
+          MODULES=$(echo "$MODULES" | tr ' ' '\n' | sort -u | grep -v '^$' | tr '\n' ' ')
+          echo "modules=${MODULES}" >> $GITHUB_OUTPUT
+
+      - name: Install Node.js
+        if: steps.changed.outputs.modules != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code
+        if: steps.changed.outputs.modules != ''
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install uv
+        if: steps.changed.outputs.modules != ''
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python dependencies
+        if: steps.changed.outputs.modules != ''
+        run: uv sync --project scripts
+
+      - name: Install Playwright browsers
+        if: steps.changed.outputs.modules != ''
+        run: uv run --project scripts playwright install chromium --with-deps
+
+      - name: Update diagrams
+        if: steps.changed.outputs.modules != ''
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          for module in ${{ steps.changed.outputs.modules }}; do
+            excalidraw=$(jq -r --arg m "$module" '.[$m].excalidraw' diagrams/manifest.json)
+            png=$(jq -r --arg m "$module" '.[$m].png' diagrams/manifest.json)
+            base=$(basename "$excalidraw" .excalidraw)
+
+            # Write diff to file to avoid large-stdin bug in Claude Code CLI
+            git diff origin/${{ github.base_ref }}...HEAD -- "${module}/*.tf" > /tmp/module_diff.txt
+
+            # Write prompt to file to avoid shell quoting issues
+            cat > /tmp/claude_prompt.txt << PROMPT
+          You are updating an Excalidraw architecture diagram to reflect Terraform infrastructure changes.
+
+          Module directory: ${module}
+          Excalidraw file to update: ${excalidraw}
+          Diff file: /tmp/module_diff.txt
+
+          Your task:
+          1. Read /tmp/module_diff.txt to understand what changed in the Terraform module
+          2. Read the current Excalidraw JSON at ${excalidraw}
+          3. Identify architectural changes: new resources, removed resources, or changed
+             configurations that should be reflected visually (e.g. new subnet, removed NSG,
+             added route table entry)
+          4. Update the Excalidraw JSON — add, remove, or modify elements to match the new
+             architecture
+          5. Preserve the existing visual style: dark theme, roughness=1, layout structure,
+             color scheme (blue for subnets/VNet containers, red for NSG, green for route tables)
+          6. Only touch elements for resources that actually changed
+          7. Write the updated JSON back to ${excalidraw}
+
+          Do not produce a PNG. Do not change colors, canvas background, or layout of
+          unchanged elements.
+          PROMPT
+
+            claude --dangerously-skip-permissions \
+              --allowedTools "Read,Write,Edit" \
+              -p "$(cat /tmp/claude_prompt.txt)"
+
+            # Render updated excalidraw to PNG
+            uv run --project scripts python scripts/render_excalidraw.py \
+              "$excalidraw" --output "diagrams/${base}.png"
+
+            # Copy PNG to module directory
+            cp "diagrams/${base}.png" "$png"
+            echo "Updated diagram for ${module}"
+          done
+
+      - name: Commit updated diagrams
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add diagrams/ modules/
+          git diff --staged --quiet || git commit -m "chore: auto-update diagrams for changed modules [skip ci]"
+          git push

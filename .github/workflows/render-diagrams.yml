@@ -42,7 +42,7 @@ jobs:
             base=$(basename "$file" .excalidraw)
             uv run --project scripts python scripts/render_excalidraw.py \
               "$file" --output "diagrams/${base}.png"
-            target=$(jq -r --arg key "${base}.excalidraw" '.[$key] // empty' diagrams/manifest.json)
+            target=$(jq -r --arg excalidraw "diagrams/${base}.excalidraw" 'to_entries[] | select(.value.excalidraw == $excalidraw) | .value.png' diagrams/manifest.json)
             if [ -n "$target" ]; then
               cp "diagrams/${base}.png" "$target"
               echo "Copied diagrams/${base}.png → $target"
